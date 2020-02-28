@@ -1,0 +1,24 @@
+{
+  "name": "bssupdater",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chegele/BSSUpdater.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/chegele/BSSUpdater/issues"
+  },
+  "homepage": "https://github.com/chegele/BSSUpdater#readme",
+  "dependencies": {
+    "fs-extra": "^8.1.0",
+    "simple-logger": "git+https://github.com/chegele/logger.git"
+  }
+}
