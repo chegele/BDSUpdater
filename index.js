@@ -25,8 +25,26 @@ Steps
 */
 
 import https from 'https';
+import path from 'path';
+import AdmZip from 'adm-zip';
 import fs from 'fs-extra';
 import Logger from 'simple-logger';
+
+
+/**
+ * @typedef Config - Configuration for Bedrock Dedicate Sever Updater.
+ * @param {String} installLocation - The directory containing the Bedrock Server.
+ * @param {String} tempLocation - The directory to store temporary files in.
+ * @param {String} updateLink - Automatically udated when avaialable version is checked. 
+ */let config = {}
+
+const downloadRegex = /https:\/\/minecraft\.azureedge\.net\/bin-linux\/.*\.zip/;
+const downloadWebpage = 'https://www.minecraft.net/en-us/download/server/bedrock/';
+const downloadFileName = 'BedrockServer.zip';
+const excludeFiles = [''];
+const metadataFile = 'serverData.json';
+const subdirectoryBackup = 'backup/'
+const subdirectoryDownload = 'download/';
 
 let log = new Logger({});
 log.logGeneral = true;
@@ -35,42 +53,130 @@ log.logWarning = true;
 log.logDetail =
 log.logDebug = true;
 
-export default class BSSUpdate {
+export default class BDSUpdate {
+    /**
+     * Creates an object which can be used to automatically update Bedrock Dedicate Sever. 
+     * @param {Config} updateConfig - the configuration for updating the server.
+     */
+    constructor(updateConfig) {
+        //TODO: config validation
+        config = updateConfig;
+    }
 
-    constructor() {
-
+    async compareVersions() {
+        try {
+            log.general('BDS Updater - Comparing versions...');
+            const currentVersion = await checkCurrentVersion();
+            const availableVersion = await checkAvailabkeVersion();
+            log.general('BDS Updater - Current version: ' + currentVersion);
+            log.general('BDS Updater - Available version: ' + availableVersion);
+            if (currentVersion == availableVersion) return {upToDate: true, currentVersion, availableVersion};
+            return {upToDate: false, currentVersion, availableVersion};
+        } catch (err) {
+            log.error('BDS updater - Error comparing current & available versions.');
+            log.error(err);
+            return {upToDate: false, currentVersion: 'Error', availableVersion: 'Error'}
+        }
     }
 
     async test() {
-        let vCheck = await checkNewVersion();
-        log.general(vCheck.link);
-        log.general(vCheck.version);
+        await downloadUpdate();
+        await backupServer();
+        console.log('all done');
     }
 }
 
 ////////////////////////////
-// BSS UPDATER FUNCTIONS 
+// BDS UPDATER FUNCTIONS 
 
-/** @typedef versionCheck
- *  @param {String} version - The version found in the download link.
- *  @param {String} link - The download link.
- * 
- * Attempts to grab the link for the most recent BSS download from Minecraft.
- * @returns {versionCheck} - An object containing the version and link. 
+async function backupServer() {
+    let destination = path.join(config.tempLocation, subdirectoryBackup);
+    log.detail('BDS Updater - Creating backup of serveer in ' + destination);
+    await fs.ensureDir(destination);
+    await fs.emptyDir(destination);
+    await fs.copy(config.installLocation, destination);
+    return true;
+}
+
+/**
+ * Checks the version of the currently installed server software.
+ * @returns {String} - The current BDS version or false if the metadata file is not found.
  */
-async function checkNewVersion() {
+async function checkCurrentVersion() {
+    let file = path.join(config.installLocation, metadataFile);
+    if (!await fs.exists(file)) return false;
+    let fileContent = await fs.readFile(file);
+    let metadata = JSON.parse(fileContent);
+    if (metadata.version == undefined) throw new Error('version missing from server metadata @ ' + file);
+    return metadata.version;
+}
+
+/** 
+ * Attempts to grab the link for the most recent BDS download from Minecraft and extracts the version.
+ * If a valid update link is found, the config object is updated with a link property. 
+ * @returns {String} - The version found in the download link.
+ */
+async function checkAvailabkeVersion() {
     // link reference: https://minecraft.azureedge.net/bin-linux/bedrock-server-1.14.30.2.zip
-    const downloadWebpage = 'https://www.minecraft.net/en-us/download/server/bedrock/';
-    const downloadRegex = /https:\/\/minecraft\.azureedge\.net\/bin-linux\/.*\.zip/;
     let data = await promiseHttpsRequest(downloadWebpage);
     let link = '' + data.match(downloadRegex);
     if (link == 'null') throw new Error('Unable to locate update link');
     let version = link.replace('https://minecraft.azureedge.net/bin-linux/bedrock-server-', '').replace('.zip', '');
-    return {version, link};
+    config.updateLink = link;
+    return version;
+}
+
+async function downloadUpdate() {
+    let destination = path.join(config.tempLocation, subdirectoryDownload);
+    let file = path.join(destination, downloadFileName);
+    log.detail('BDS Updater - Donlowading update to ' + destination);
+    await fs.ensureDir(destination);
+    await fs.emptyDir(destination);
+    if (!config.updateLink) await checkAvailabkeVersion();
+    await promiseHttpsDownload(config.updateLink, file);
+    await promiseUnzip(file, destination);
+    await fs.unlink(file);
+    return true;
+}
+
+async function installAddons() {
+
+}
+
+async function installUpdate() {
+
+}
+
+async function serverLaunchTest() {
+
 }
 
 ////////////////////////////
 // HELPER & MISC FUNCTIONS 
+
+function promiseHttpsDownload(url, destination) {
+    return new Promise(function(resolve, reject) {
+        const file = fs.createWriteStream(destination);
+        const req = https.get(url, res => {
+            // pipe output to destination file
+            res.pipe(file);
+        });
+        file.on('finish', function(){
+            // once finished, close file and resolve
+            file.close(resolve);
+        });
+        req.on('error', err => {
+            // Log errors and reject
+            log.error('BDS Updater - Erorr downloading file.');
+            reject(err);
+        });
+        // Send the request
+        log.detail('BDS Updater - Downloading file from ' + url);
+        log.detail('BDS Updater - Saving file as ' + destination);
+        req.end();
+    });
+}
+
 
 /**
  * A promise wrapper for sending a get https requests.
@@ -86,12 +192,31 @@ function promiseHttpsRequest(url, options) {
             res.on('data', data => {body += data});
             res.on('end', function() {
                 if (res.statusCode == '200') return resolve(body);
-                log.detail('BSS Updater - Bad Response ' + res.statusCode);
+                log.warning('BDS Updater - Bad Response ' + res.statusCode);
                 reject(res.statusCode);
             });
         });
-        log.detail('BSS Update - Sending request to ' + url);
+        log.detail('BDS Updater - Sending request to ' + url);
         req.on('error', error => reject(err));
         req.end();
     }); 
+}
+
+/**
+ * Extarcts a zip file and resolves an empty promise. 
+ * @param {String} file - The path of the archvie to unzip.
+ * @param {String} destination - Te location to extract the files to. 
+ */
+function promiseUnzip(file, destination) {
+    log.detail('BDS Updater - Unzipping ' + file);
+    return new Promise(function(resolve, reject) {
+        let archive = new AdmZip(file);
+        archive.extractAllToAsync(destination, true, err => {
+            if (err) {
+                log.error(`BDS Updater - Error extarcting ${file} to ${destination}.`);
+                return reject(err);
+            }
+            resolve();
+        });
+    });
 }
